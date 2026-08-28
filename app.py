@@ -1,6 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 import json
+import re
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Kids Urdu Vocab & Quran App", page_icon="📖", layout="centered")
@@ -9,7 +10,6 @@ st.title("📖 Kids English-Urdu Learning App")
 st.write("Type an English word to learn its Urdu meaning, audio pronunciation, and connection to the Quran & Hadith!")
 
 # --- API Key Setup ---
-# Pulls safely from Streamlit Secrets
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
@@ -26,14 +26,13 @@ if st.button("Search Word", type="primary"):
     else:
         with st.spinner(f"Finding meanings and Quranic verses for '{word}'..."):
             try:
-                # Initialize Gemini Model
-                model = genai.GenerativeModel("gemini-1.5-flash")
+                # Using Gemini 3.5 Flash
+                model = genai.GenerativeModel("gemini-3.5-flash")
                 
-                # System instructions requesting strict JSON output
                 prompt = f"""
                 You are an educational assistant for Muslim children. 
                 Analyze the word: '{word}'.
-                Return ONLY a JSON object with this exact structure (no markdown formatting, no code blocks):
+                Return ONLY a valid JSON object matching this exact structure:
                 {{
                     "word": "{word}",
                     "urdu_meaning": "Urdu translation of the word",
@@ -55,11 +54,21 @@ if st.button("Search Word", type="primary"):
                 }}
                 """
 
-                response = model.generate_content(prompt)
+                # Enforce JSON output format
+                response = model.generate_content(
+                    prompt, 
+                    generation_config={"response_mime_type": "application/json"}
+                )
                 
-                # Clean response text if model returns code wrappers
-                clean_json = response.text.replace("```json", "").replace("```", "").strip()
-                data = json.loads(clean_json)
+                # Extract JSON cleanly using regular expressions
+                raw_text = response.text.strip()
+                json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+                
+                if json_match:
+                    clean_json = json_match.group(0)
+                    data = json.loads(clean_json)
+                else:
+                    data = json.loads(raw_text)
 
                 st.divider()
 
@@ -67,7 +76,6 @@ if st.button("Search Word", type="primary"):
                 st.header(f"🔤 Word: {data['word'].capitalize()}")
                 st.subheader(f"Urdu Meaning: {data['urdu_meaning']}")
 
-                # Browser-native Audio Pronunciation using Google TTS links
                 st.markdown("**Listen to Pronunciation:**")
                 col1, col2 = st.columns(2)
                 with col1:
@@ -86,12 +94,11 @@ if st.button("Search Word", type="primary"):
                 st.header("🌙 Quran Connection")
                 st.caption(f"Reference: {data['quran']['surah_name']}")
                 
-                # Display Arabic Verse
                 st.markdown(f"<h2 style='text-align: right; color: #1E3A8A;'>{data['quran']['arabic']}</h2>", unsafe_allow_html=True)
                 st.write(f"**Transliteration:** *{data['quran']['transliteration']}*")
                 st.write(f"**Urdu Translation:** {data['quran']['translation_urdu']}")
 
-                # Quran Audio Recitation (Fetched dynamically from EveryAyah)
+                # Recitation Audio
                 s_num = str(data['quran']['surah_num']).zfill(3)
                 a_num = str(data['quran']['ayah_num']).zfill(3)
                 quran_audio_url = f"https://www.everyayah.com/data/Abdul_Basit_Murattal_192kbps/{s_num}{a_num}.mp3"
@@ -106,4 +113,5 @@ if st.button("Search Word", type="primary"):
                 st.write(f"**Urdu:** {data['hadith']['text_urdu']}")
 
             except Exception as e:
-                st.error("Could not parse data for this word. Please try another common word!")
+                # Displays exact error to make troubleshooting easy
+                st.error(f"Search Error: {e}")
